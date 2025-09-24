@@ -1,0 +1,3 @@
+streamlit
+cryptography
+pip install -r requirements.txt
