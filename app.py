@@ -1,14 +1,24 @@
 import streamlit as st
 from cryptography.fernet import Fernet
 import json, time, sqlite3, pandas as pd
+from random import random
+from streamlit_autorefresh import st_autorefresh
+
+# === Streamlit Setup ===
+st.set_page_config(page_title="Live Secure Sensor Data", page_icon="🔐", layout="wide")
+st.title("🔐 Live Secure Sensor Data Dashboard")
+
+# === Auto-refresh every 5 seconds ===
+st_autorefresh(interval=5000, limit=None, key="live_refresh")
 
 # === Simulate Sensor Data ===
 def simulate_sensor_data():
     """Simulate a new sensor reading"""
+    factor = random()
     return {
-        "temperature": round(20 + 10 * st.session_state.random_factor, 1),
-        "humidity": round(50 + 20 * st.session_state.random_factor, 1),
-        "co2_level": round(400 + 50 * st.session_state.random_factor)
+        "temperature": round(20 + 10 * factor, 1),
+        "humidity": round(50 + 20 * factor, 1),
+        "co2_level": round(400 + 50 * factor)
     }
 
 # === Key Management ===
@@ -37,13 +47,11 @@ def secure_transmission(cipher, data: dict):
 def init_db():
     conn = sqlite3.connect("sensor_data.db")
     c = conn.cursor()
-    # Table for encrypted sensor data
     c.execute('''CREATE TABLE IF NOT EXISTS sensor_data (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
                  timestamp TEXT,
                  encrypted_data TEXT
                  )''')
-    # Table for key history
     c.execute('''CREATE TABLE IF NOT EXISTS key_history (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
                  timestamp TEXT,
@@ -64,7 +72,7 @@ def save_sensor_data(encrypted_data):
 def save_key_history(history):
     conn = sqlite3.connect("sensor_data.db")
     c = conn.cursor()
-    c.execute("DELETE FROM key_history")  # clear previous entries
+    c.execute("DELETE FROM key_history")
     for record in history:
         c.execute("INSERT INTO key_history (timestamp, key, status) VALUES (?, ?, ?)",
                   (record["timestamp"], record["key"], record["status"]))
@@ -87,26 +95,22 @@ def load_key_history():
     conn.close()
     return rows
 
-# === Streamlit App Setup ===
-st.set_page_config(page_title="Secure Sensor Data Demo", page_icon="🔐", layout="wide")
-st.title("🔐 Secure Sensor Data (Encryption Demo)")
-
-# Initialize DB
+# === Initialize DB and Key Manager ===
 init_db()
-
-# Session state setup
 if "km" not in st.session_state:
     st.session_state.km = KeyManager()
-if "random_factor" not in st.session_state:
-    st.session_state.random_factor = 0.5  # for simulated data variation
 
-# Simulate data
+# === Generate Live Sensor Data ===
 sensor_data = simulate_sensor_data()
+encrypted, decrypted = secure_transmission(st.session_state.km.cipher, sensor_data)
+
+# === Save data to DB ===
+save_sensor_data(encrypted)
+save_key_history(st.session_state.km.history)
+
+# === Display Current Sensor Data ===
 st.subheader("📡 Current Sensor Data")
 st.json(sensor_data)
-
-# Encrypt/Decrypt
-encrypted, decrypted = secure_transmission(st.session_state.km.cipher, sensor_data)
 
 st.subheader("🔒 Encrypted Data")
 st.code(encrypted.decode(), language="")
@@ -114,11 +118,7 @@ st.code(encrypted.decode(), language="")
 st.subheader("🔓 Decrypted Data")
 st.json(json.loads(decrypted))
 
-# Save data & key history to SQLite
-save_sensor_data(encrypted)
-save_key_history(st.session_state.km.history)
-
-# Key management buttons
+# === Key Management Buttons ===
 col1, col2 = st.columns(2)
 with col1:
     if st.button("🔄 Rotate Key"):
@@ -129,17 +129,17 @@ with col2:
         st.session_state.km.revoke_key()
         save_key_history(st.session_state.km.history)
 
-# Show key history
+# === Display Key History ===
 st.subheader("🔑 Key Status History")
 key_hist = load_key_history()
 st.dataframe(pd.DataFrame(key_hist, columns=["ID", "Timestamp", "Key", "Status"]))
 
-# Show past encrypted data
+# === Display Past Encrypted Data ===
 st.subheader("🗄️ Stored Encrypted Data")
 rows = load_sensor_data()
 st.dataframe(pd.DataFrame(rows, columns=["ID", "Timestamp", "Encrypted Data"]))
 
-# Decrypt past data
+# === Decrypt Historical Data by ID ===
 st.subheader("🗂️ Decrypt Historical Data")
 selected_id = st.number_input("Enter record ID to decrypt", min_value=1, step=1)
 if st.button("Decrypt Selected Record"):
@@ -154,7 +154,7 @@ if st.button("Decrypt Selected Record"):
     else:
         st.warning("Record ID not found.")
 
-# Export feature
+# === Export Feature ===
 st.subheader("💾 Export Data")
 if st.button("Export Sensor Data to CSV"):
     df = pd.DataFrame(rows, columns=["ID", "Timestamp", "Encrypted Data"])
